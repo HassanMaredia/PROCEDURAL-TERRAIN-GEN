@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Procedural Terrain - OPTIMIZED (Smooth 60fps)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            background: #0a0c12;
+            overflow: hidden;
+            font-family: 'Segoe UI', Inter, system-ui, monospace;
+        }
+
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+
+        .top-bar {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            height: 50px;
+            background: rgba(20, 24, 35, 0.9);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 100;
+            font-size: 0.85rem;
+        }
+
+        .logo {
+            color: #eef5ff;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .seed-area {
+            display: flex;
+            gap: 8px;
+            background: rgba(0,0,0,0.4);
+            padding: 4px 12px;
+            border-radius: 30px;
+            align-items: center;
+        }
+        input {
+            background: #1e2436;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 16px;
+            color: white;
+            font-size: 0.8rem;
+            width: 120px;
+        }
+        button {
+            background: #2e3a55;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 20px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        button:hover {
+            background: #4a6290;
+        }
+
+        .control-panel {
+            position: fixed;
+            right: 12px;
+            top: 80px;
+            bottom: 12px;
+            width: 240px;
+            background: rgba(15, 20, 28, 0.92);
+            backdrop-filter: blur(16px);
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 12px;
+            overflow-y: auto;
+            z-index: 200;
+            font-size: 0.7rem;
+            color: #eef2ff;
+        }
+        .control-panel h3 {
+            font-size: 0.8rem;
+            margin-bottom: 8px;
+            margin-top: 8px;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        .control-group label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 3px;
+            -webkit-appearance: none;
+            background: #2c3548;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #8cb4ff;
+            cursor: pointer;
+        }
+        .status {
+            font-size: 0.65rem;
+            text-align: center;
+            margin-top: 8px;
+            background: #00000044;
+            border-radius: 12px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+<canvas id="terrainCanvas"></canvas>
+
+<div class="top-bar">
+    <div class="logo">🗻 TERRAIN GENERATOR (OPTIMIZED)</div>
+    <div class="seed-area">
+        <label>SEED</label>
+        <input type="text" id="seedInput" value="fast_terrain">
+        <button id="applySeedBtn">⟳</button>
+    </div>
+    <div class="action-group">
+        <button id="resetViewBtn">RESET</button>
+        <button id="exportPngBtn">PNG</button>
+    </div>
+</div>
+
+<div class="control-panel">
+    <h3>🌋 TERRAIN</h3>
+    <div class="control-group"><label>Scale <span id="scaleVal">0.015</span></label><input type="range" id="scale" min="0.008" max="0.03" step="0.001" value="0.015"></div>
+    <div class="control-group"><label>Roughness <span id="roughnessVal">0.5</span></label><input type="range" id="roughness" min="0.3" max="0.8" step="0.01" value="0.5"></div>
+    
+    <h3>💧 BIOMES</h3>
+    <div class="control-group"><label>Water <span id="waterVal">0.25</span></label><input type="range" id="waterLevel" min="0.15" max="0.45" step="0.01" value="0.25"></div>
+    <div class="control-group"><label>Sand <span id="sandVal">0.32</span></label><input type="range" id="sandLevel" min="0.25" max="0.55" step="0.01" value="0.32"></div>
+    <div class="control-group"><label>Mountain <span id="mountainVal">0.68</span></label><input type="range" id="mountainLevel" min="0.55" max="0.85" step="0.01" value="0.68"></div>
+    
+    <div class="status" id="statsStatus">📍 Ready | 60fps</div>
+    <button id="regenerateFullBtn" style="width:100%; margin-top:8px;">🔄 REGENERATE</button>
+</div>
+
+<script>
+    (function() {
+        const canvas = document.getElementById('terrainCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // OPTIMIZED: Smaller chunks, larger tiles for performance
+        const TILE_SIZE = 8;     // pixels per tile
+        const CHUNK_SIZE = 32;   // 32x32 tiles per chunk
+        const CHUNK_PIXELS = CHUNK_SIZE * TILE_SIZE;
+        
+        let params = {
+            seed: 'fast_terrain',
+            scale: 0.015,
+            roughness: 0.5,
+            waterLevel: 0.25,
+            sandLevel: 0.32,
+            mountainLevel: 0.68
+        };
+        
+        // Pre-computed color palettes
+        const COLORS = {
+            water: '#2b6f9e',
+            sand: '#e8c99e', 
+            grass: '#6aab5a',
+            forest: '#3d7a2a',
+            rock: '#8a7a6a',
+            snow: '#f0f0f0'
+        };
+        
+        let noiseGen = null;
+        let chunkCache = new Map();
+        let camera = { x: 0, y: 0, zoom: 0.8 };
+        let drag = { active: false, lastX: 0, lastY: 0 };
+        let needsRender = true;
+        let frameRequest = null;
+        
+        // SIMPLE but FAST noise function (optimized)
+        class FastNoise {
+            constructor(seed) {
+                this.perm = new Uint8Array(512);
+                let p = new Uint8Array(256);
+                for(let i = 0; i < 256; i++) p[i] = i;
+                
+                let hash = 0;
+                for(let i = 0; i < String(seed).length; i++) {
+                    hash = ((hash << 5) - hash) + String(seed).charCodeAt(i);
+                    hash |= 0;
+                }
+                
+                let rng = () => {
+                    hash = (hash * 1103515245 + 12345) & 0x7fffffff;
+                    return hash;
+                };
+                
+                for(let i = 255; i > 0; i--) {
+                    const j = rng() % (i + 1);
+                    [p[i], p[j]] = [p[j], p[i]];
+                }
+                
+                for(let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
+            }
+            
+            fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            lerp(a, b, t) { return a + t * (b - a); }
+            
+            grad(idx, x, y) {
+                const gradients = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+                const g = gradients[idx & 7];
+                return g[0] * x + g[1] * y;
+            }
+            
+            noise2D(x, y) {
+                const xi = Math.floor(x) & 255;
+                const yi = Math.floor(y) & 255;
+                const xf = x - Math.floor(x);
+                const yf = y - Math.floor(y);
+                const u = this.fade(xf);
+                const v = this.fade(yf);
+                
+                const p = this.perm;
+                const aa = p[p[xi] + yi];
+                const ab = p[p[xi] + yi + 1];
+                const ba = p[p[xi + 1] + yi];
+                const bb = p[p[xi + 1] + yi + 1];
+                
+                const x1 = this.lerp(this.grad(aa, xf, yf), this.grad(ba, xf - 1, yf), u);
+                const x2 = this.lerp(this.grad(ab, xf, yf - 1), this.grad(bb, xf - 1, yf - 1), u);
+                
+                return (this.lerp(x1, x2, v) + 1) / 2;
+            }
+        }
+        
+        function fbm(noise, x, y, octaves, persistence, scale) {
+            let value = 0;
+            let amp = 1;
+            let freq = scale;
+            let maxAmp = 0;
+            
+            for(let i = 0; i < octaves; i++) {
+                value += noise.noise2D(x * freq, y * freq) * amp;
+                maxAmp += amp;
+                amp *= persistence;
+                freq *= 2.1;
+            }
+            return value / maxAmp;
+        }
+        
+        function getHeight(x, y) {
+            let h = fbm(noiseGen, x, y, 4, params.roughness, params.scale);
+            h = Math.min(0.95, Math.max(0.05, h));
+            return h;
+        }
+        
+        function getMoisture(x, y) {
+            return fbm(noiseGen, x + 100, y + 100, 3, 0.5, 0.012);
+        }
+        
+        function getBiome(height, moisture) {
+            if(height < params.waterLevel) return 'water';
+            if(height < params.sandLevel) return 'sand';
+            if(height < params.mountainLevel) {
+                return moisture > 0.55 ? 'forest' : 'grass';
+            }
+            return height > 0.85 ? 'snow' : 'rock';
+        }
+        
+        // OPTIMIZED: Generate chunk faster with less computation
+        function generateChunk(cx, cy) {
+            const startX = cx * CHUNK_SIZE;
+            const startY = cy * CHUNK_SIZE;
+            const heightMap = new Float32Array(CHUNK_SIZE * CHUNK_SIZE);
+            const biomeMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE); // Store biome as byte for speed
+            
+            for(let y = 0; y < CHUNK_SIZE; y++) {
+                for(let x = 0; x < CHUNK_SIZE; x++) {
+                    const wx = (startX + x) * 0.35;
+                    const wy = (startY + y) * 0.35;
+                    const height = getHeight(wx, wy);
+                    const moisture = getMoisture(wx, wy);
+                    const biome = getBiome(height, moisture);
+                    
+                    heightMap[y * CHUNK_SIZE + x] = height;
+                    
+                    // Store biome as index for faster rendering
+                    let biomeIdx = 0;
+                    switch(biome) {
+                        case 'water': biomeIdx = 0; break;
+                        case 'sand': biomeIdx = 1; break;
+                        case 'grass': biomeIdx = 2; break;
+                        case 'forest': biomeIdx = 3; break;
+                        case 'rock': biomeIdx = 4; break;
+                        case 'snow': biomeIdx = 5; break;
+                    }
+                    biomeMap[y * CHUNK_SIZE + x] = biomeIdx;
+                }
+            }
+            
+            return { heightMap, biomeMap };
+        }
+        
+        function getChunk(cx, cy) {
+            const key = `${cx},${cy}`;
+            if(chunkCache.has(key)) {
+                return chunkCache.get(key);
+            }
+            const chunk = generateChunk(cx, cy);
+            chunkCache.set(key, chunk);
+            return chunk;
+        }
+        
+        // BIOME COLORS as array for fast lookup
+        const BIOME_COLORS = ['#2b6f9e', '#e8c99e', '#6aab5a', '#3d7a2a', '#8a7a6a', '#f0f0f0'];
+        
+        // OPTIMIZED: Minimal rendering, no per-pixel shade calculations
+        function render() {
+            if(!needsRender) return;
+            needsRender = false;
+            
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            // Clear with sky color
+            ctx.fillStyle = '#0a1030';
+            ctx.fillRect(0, 0, w, h);
+            
+            const zoom = camera.zoom;
+            const centerX = camera.x;
+            const centerY = camera.y;
+            
+            const startWorldX = centerX - (w / 2) / zoom;
+            const startWorldY = centerY - (h / 2) / zoom;
+            
+            const minChunkX = Math.floor(startWorldX / CHUNK_PIXELS) - 1;
+            const minChunkY = Math.floor(startWorldY / CHUNK_PIXELS) - 1;
+            const maxChunkX = Math.floor((startWorldX + w / zoom) / CHUNK_PIXELS) + 1;
+            const maxChunkY = Math.floor((startWorldY + h / zoom) / CHUNK_PIXELS) + 1;
+            
+            let renderedChunks = 0;
+            
+            for(let cy = minChunkY; cy <= maxChunkY; cy++) {
+                for(let cx = minChunkX; cx <= maxChunkX; cx++) {
+                    const chunk = getChunk(cx, cy);
+                    const chunkWorldX = cx * CHUNK_PIXELS;
+                    const chunkWorldY = cy * CHUNK_PIXELS;
+                    
+                    const screenX = (chunkWorldX - centerX) * zoom + w / 2;
+                    const screenY = (chunkWorldY - centerY) * zoom + h / 2;
+                    const screenW = CHUNK_PIXELS * zoom;
+                    const screenH = CHUNK_PIXELS * zoom;
+                    
+                    if(screenX + screenW < 0 || screenX > w || screenY + screenH < 0 || screenY > h) continue;
+                    
+                    renderedChunks++;
+                    
+                    // Calculate visible tile range
+                    const startTileX = Math.max(0, Math.floor(-screenX / zoom / TILE_SIZE));
+                    const endTileX = Math.min(CHUNK_SIZE, Math.ceil((w - screenX) / zoom / TILE_SIZE) + 1);
+                    const startTileY = Math.max(0, Math.floor(-screenY / zoom / TILE_SIZE));
+                    const endTileY = Math.min(CHUNK_SIZE, Math.ceil((h - screenY) / zoom / TILE_SIZE) + 1);
+                    
+                    const tileSizePx = TILE_SIZE * zoom;
+                    
+                    for(let ty = startTileY; ty < endTileY; ty++) {
+                        for(let tx = startTileX; tx < endTileX; tx++) {
+                            const biomeIdx = chunk.biomeMap[ty * CHUNK_SIZE + tx];
+                            const px = screenX + tx * tileSizePx;
+                            const py = screenY + ty * tileSizePx;
+                            
+                            ctx.fillStyle = BIOME_COLORS[biomeIdx];
+                            ctx.fillRect(px, py, tileSizePx + 0.5, tileSizePx + 0.5);
+                        }
+                    }
+                }
+            }
+            
+            // Simple fog
+            ctx.fillStyle = 'rgba(10, 16, 48, 0.25)';
+            ctx.fillRect(0, 0, w, h);
+            
+            document.getElementById('statsStatus').innerHTML = `📍 ${Math.floor(camera.x)},${Math.floor(camera.y)} | 🔍 ${camera.zoom.toFixed(1)}x | 🧩 ${renderedChunks}`;
+        }
+        
+        function regenerateWorld() {
+            chunkCache.clear();
+            noiseGen = new FastNoise(params.seed);
+            needsRender = true;
+            render();
+        }
+        
+        // Throttled render on camera move
+        function onCameraMove() {
+            needsRender = true;
+        }
+        
+        function setupUI() {
+            const controls = [
+                { id: 'scale', param: 'scale' },
+                { id: 'roughness', param: 'roughness' },
+                { id: 'waterLevel', param: 'waterLevel' },
+                { id: 'sandLevel', param: 'sandLevel' },
+                { id: 'mountainLevel', param: 'mountainLevel' }
+            ];
+            
+            controls.forEach(ctrl => {
+                const el = document.getElementById(ctrl.id);
+                const span = document.getElementById(ctrl.id + 'Val');
+                if(el) {
+                    el.addEventListener('input', (e) => {
+                        const val = parseFloat(e.target.value);
+                        if(span) span.innerText = val;
+                        params[ctrl.param] = val;
+                        regenerateWorld();
+                    });
+                }
+            });
+            
+            document.getElementById('seedInput').addEventListener('change', (e) => {
+                params.seed = e.target.value;
+                regenerateWorld();
+            });
+            document.getElementById('applySeedBtn').addEventListener('click', () => {
+                params.seed = document.getElementById('seedInput').value;
+                regenerateWorld();
+            });
+            document.getElementById('regenerateFullBtn').addEventListener('click', () => regenerateWorld());
+            document.getElementById('resetViewBtn').addEventListener('click', () => {
+                camera = { x: 0, y: 0, zoom: 0.8 };
+                onCameraMove();
+            });
+            document.getElementById('exportPngBtn').addEventListener('click', () => {
+                const link = document.createElement('a');
+                link.download = `terrain_${params.seed}.png`;
+                link.href = canvas.toDataURL();
+                link.click();
+            });
+        }
+        
+        function setupCamera() {
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = -e.deltaY * 0.005;
+                camera.zoom = Math.min(2.0, Math.max(0.5, camera.zoom + delta));
+                onCameraMove();
+            });
+            
+            canvas.addEventListener('mousedown', (e) => {
+                drag.active = true;
+                drag.lastX = e.clientX;
+                drag.lastY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            });
+            
+            window.addEventListener('mousemove', (e) => {
+                if(!drag.active) return;
+                const dx = e.clientX - drag.lastX;
+                const dy = e.clientY - drag.lastY;
+                camera.x -= dx / camera.zoom;
+                camera.y -= dy / camera.zoom;
+                drag.lastX = e.clientX;
+                drag.lastY = e.clientY;
+                onCameraMove();
+            });
+            
+            window.addEventListener('mouseup', () => {
+                drag.active = false;
+                canvas.style.cursor = 'grab';
+            });
+            
+            window.addEventListener('keydown', (e) => {
+                const speed = 30 / camera.zoom;
+                if(e.key === 'w' || e.key === 'ArrowUp') camera.y -= speed;
+                if(e.key === 's' || e.key === 'ArrowDown') camera.y += speed;
+                if(e.key === 'a' || e.key === 'ArrowLeft') camera.x -= speed;
+                if(e.key === 'd' || e.key === 'ArrowRight') camera.x += speed;
+                onCameraMove();
+            });
+        }
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            onCameraMove();
+        }
+        
+        function animate() {
+            if(needsRender) render();
+            frameRequest = requestAnimationFrame(animate);
+        }
+        
+        function init() {
+            resizeCanvas();
+            setupUI();
+            setupCamera();
+            window.addEventListener('resize', resizeCanvas);
+            
+            noiseGen = new FastNoise(params.seed);
+            regenerateWorld();
+            animate();
+        }
+        
+        init();
+    })();
+</script>
+</body>
+</html>
